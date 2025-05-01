@@ -1,213 +1,275 @@
+import logging
 import os
 import sys
 import time
-import logging
 from http import HTTPStatus
 
 import requests
 import telebot
 from dotenv import load_dotenv
 
+from decorators import prevent_duplicate_messages
+from exceptions import APIError
+
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
-
-PRACTICUM_TOKEN = os.getenv("PRACTICUM_TOKEN")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 RETRY_PERIOD = 600
 ENDPOINT = (
-    "https://practicum.yandex.ru/api/"
-    "user_api/homework_statuses/"
+    'https://practicum.yandex.ru/api/'
+    'user_api/homework_statuses/'
 )
-HEADERS = {"Authorization": f"OAuth {PRACTICUM_TOKEN}"}
+HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
 HOMEWORK_VERDICTS = {
-    "approved": "Работа проверена: ревьюеру всё понравилось. Ура!",
-    "reviewing": "Работа взята на проверку ревьюером.",
-    "rejected": "Работа проверена: у ревьюера есть замечания.",
+    'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
+    'reviewing': 'Работа взята на проверку ревьюером.',
+    'rejected': 'Работа проверена: у ревьюера есть замечания.',
 }
 
 
-class APIError(Exception):
-    """Исключение при ошибке обращения к API."""
-
-
 def check_tokens():
-    """Проверяет доступность переменных окружения."""
+    """Проверяет доступность переменных окружения.
+
+    Raises:
+        ValueError: Если отсутствуют обязательные переменные окружения.
+    """
     tokens = {
-        "PRACTICUM_TOKEN": PRACTICUM_TOKEN,
-        "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
-        "TELEGRAM_CHAT_ID": TELEGRAM_CHAT_ID,
+        'PRACTICUM_TOKEN': PRACTICUM_TOKEN,
+        'TELEGRAM_TOKEN': TELEGRAM_TOKEN,
+        'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
     }
     missing = [key for key, value in tokens.items() if not value]
     if missing:
-        error_msg = (
-            "Отсутствуют обязательные переменные окружения: "
-            f"{', '.join(missing)}"
+        logging.critical(
+            'Отсутствуют обязательные переменные окружения: '
+            f'{", ".join(missing)}'
         )
-        logger.critical(error_msg)
-        raise ValueError(error_msg)
+        raise ValueError(
+            'Отсутствуют обязательные переменные окружения: '
+            f'{", ".join(missing)}'
+        )
 
 
+@prevent_duplicate_messages
 def send_message(bot, message):
-    """Отправляет сообщение в Telegram чат."""
-    if not hasattr(send_message, 'last_message'):
-        send_message.last_message = None
+    """Отправляет сообщение в Telegram чат.
 
-    if message == send_message.last_message:
-        logger.debug("Пропускаем отправку дублирующегося сообщения")
-        return True
+    Args:
+        bot: Объект бота Telegram.
+        message: Текст сообщения для отправки.
 
-    logger.debug(f'Начинаю отправку сообщения: "{message}"')
+    Returns:
+        bool: True если сообщение отправлено успешно, False в случае ошибки.
+    """
+    logging.debug(f'Начинаю отправку сообщения: "{message}"')
     try:
         bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=message)
-        logger.debug(f'Бот отправил сообщение "{message}"')
-        send_message.last_message = message
+        logging.debug(f'Бот отправил сообщение "{message}"')
         return True
     except (
         telebot.apihelper.ApiException,
         requests.exceptions.RequestException
     ) as error:
-        logger.error(f"Сбой при отправке сообщения в Telegram: {error}")
+        logging.exception(f'Сбой при отправке сообщения в Telegram: {error}')
         return False
 
 
 def get_api_answer(timestamp):
-    """Делает запрос к API-сервису Practicum."""
-    logger.debug(
-        "Отправляем запрос к API: "
-        f"{ENDPOINT} с параметрами from_date={timestamp}"
+    """Делает запрос к API-сервису Practicum.
+
+    Args:
+        timestamp: Временная метка для запроса.
+
+    Returns:
+        dict: Ответ API в формате JSON.
+
+    Raises:
+        ConnectionError: При ошибке соединения с API.
+        APIError: При недоступности эндпоинта.
+    """
+    logging.debug(
+        'Отправляем запрос к API: '
+        f'{ENDPOINT} с параметрами from_date={timestamp}'
     )
     try:
         response = requests.get(
             ENDPOINT,
             headers=HEADERS,
-            params={"from_date": timestamp},
+            params={'from_date': timestamp},
         )
     except requests.exceptions.RequestException as error:
-        error_msg = (
-            f"Ошибка при запросе к API: {error}. "
-            f"URL: {ENDPOINT}, timestamp: {timestamp}"
+        logging.exception(
+            f'Ошибка при запросе к API: {error}. '
+            f'URL: {ENDPOINT}, timestamp: {timestamp}'
         )
-        raise ConnectionError(error_msg)
+        raise ConnectionError(
+            f'Ошибка при запросе к API: {error}. '
+            f'URL: {ENDPOINT}, timestamp: {timestamp}'
+        )
 
     if response.status_code != HTTPStatus.OK:
-        error_msg = (
-            f"Эндпоинт недоступен (status={response.status_code}). "
-            f"URL: {ENDPOINT}"
+        logging.exception(
+            f'Эндпоинт недоступен (status={response.status_code}). '
+            f'URL: {ENDPOINT}'
         )
-        raise APIError(error_msg)
+        raise APIError(
+            f'Эндпоинт недоступен (status={response.status_code}). '
+            f'URL: {ENDPOINT}'
+        )
 
-    logger.debug("Успешно получен ответ от API")
+    logging.debug('Успешно получен ответ от API')
     return response.json()
 
 
 def check_response(response):
-    """Проверяет ответ API на соответствие документации."""
-    logger.debug("Начинаю проверку ответа API")
+    """Проверяет ответ API на соответствие документации.
+
+    Args:
+        response: Ответ API для проверки.
+
+    Returns:
+        list: Список домашних работ.
+
+    Raises:
+        TypeError: При неверном типе данных в ответе.
+        KeyError: При отсутствии необходимых ключей в ответе.
+    """
+    logging.debug('Начинаю проверку ответа API')
     if not isinstance(response, dict):
-        error_msg = (
-            f"Ответ API не является словарем, "
-            f"получен тип {type(response).__name__}"
+        logging.exception(
+            'Ответ API не является словарем, '
+            f'получен тип {type(response).__name__}'
         )
-        raise TypeError(error_msg)
+        raise TypeError(
+            'Ответ API не является словарем, '
+            f'получен тип {type(response).__name__}'
+        )
 
-    if "homeworks" not in response:
-        error_msg = 'В ответе API отсутствует ключ "homeworks"'
-        raise KeyError(error_msg)
+    if 'homeworks' not in response:
+        logging.exception('В ответе API отсутствует ключ "homeworks"')
+        raise KeyError('В ответе API отсутствует ключ "homeworks"')
 
-    homeworks = response["homeworks"]
+    homeworks = response['homeworks']
     if not isinstance(homeworks, list):
-        error_msg = (
-            f"В ответе API homeworks не является списком, "
-            f"получен тип {type(homeworks).__name__}"
+        logging.exception(
+            'В ответе API homeworks не является списком, '
+            f'получен тип {type(homeworks).__name__}'
         )
-        raise TypeError(error_msg)
+        raise TypeError(
+            'В ответе API homeworks не является списком, '
+            f'получен тип {type(homeworks).__name__}'
+        )
 
-    logger.debug("Проверка ответа API успешно завершена")
+    logging.debug('Проверка ответа API успешно завершена')
     return homeworks
 
 
 def parse_status(homework):
-    """Извлекает из информации о домашней работе статус."""
-    logger.debug("Начинаю разбор статуса домашней работы")
-    if not isinstance(homework, dict):
-        error_msg = (
-            f"homework должен быть словарем, "
-            f"получен тип {type(homework).__name__}"
-        )
-        raise TypeError(error_msg)
+    """Извлекает из информации о домашней работе статус.
 
-    required_keys = ["homework_name", "status"]
+    Args:
+        homework: Информация о домашней работе.
+
+    Returns:
+        str: Сообщение о статусе домашней работы.
+
+    Raises:
+        TypeError: При неверном типе данных.
+        KeyError: При отсутствии необходимых ключей.
+        ValueError: При неожиданном статусе работы.
+    """
+    logging.debug('Начинаю разбор статуса домашней работы')
+    if not isinstance(homework, dict):
+        logging.exception(
+            'homework должен быть словарем, '
+            f'получен тип {type(homework).__name__}'
+        )
+        raise TypeError(
+            'homework должен быть словарем, '
+            f'получен тип {type(homework).__name__}'
+        )
+
+    required_keys = ['homework_name', 'status']
     missing_keys = [key for key in required_keys if key not in homework]
     if missing_keys:
-        error_msg = (
+        logging.exception(
             f'В ответе API отсутствуют ключи: {", ".join(missing_keys)}'
         )
-        raise KeyError(error_msg)
+        raise KeyError(
+            f'В ответе API отсутствуют ключи: {", ".join(missing_keys)}'
+        )
 
-    name = homework["homework_name"]
-    status = homework["status"]
+    name = homework['homework_name']
+    status = homework['status']
 
     if status not in HOMEWORK_VERDICTS:
-        error_msg = f"Неожиданный статус домашней работы: {status}"
-        raise ValueError(error_msg)
+        logging.exception(f'Неожиданный статус домашней работы: {status}')
+        raise ValueError(f'Неожиданный статус домашней работы: {status}')
 
     verdict = HOMEWORK_VERDICTS[status]
     message = (
         f'Изменился статус проверки работы "{name}". '
-        f"{verdict}"
+        f'{verdict}'
     )
-    logger.debug("Разбор статуса домашней работы успешно завершен")
+    logging.debug('Разбор статуса домашней работы успешно завершен')
     return message
 
 
 def check_homework_status(bot, timestamp):
-    """Проверяет статус ДЗ и отправляет уведомление."""
+    """Проверяет статус ДЗ и отправляет уведомление.
+
+    Args:
+        bot: Объект бота Telegram.
+        timestamp: Временная метка для запроса.
+
+    Returns:
+        int: Новая временная метка.
+    """
     try:
         response = get_api_answer(timestamp)
         homeworks = check_response(response)
         if not homeworks:
-            logger.debug("Отсутствие в ответе новых статусов")
+            logging.debug('Отсутствие в ответе новых статусов')
             return timestamp
 
         message = parse_status(homeworks[0])
         if not send_message(bot, message):
             return timestamp
 
-        return response.get("current_date", timestamp)
+        return response.get('current_date', timestamp)
 
     except Exception as error:
-        message = f"Сбой в работе программы: {error}"
-        logger.error(message)
-        send_message(bot, message)
+        logging.exception(f'Сбой в работе программы: {error}')
+        send_message(bot, f'Сбой в работе программы: {error}')
         return timestamp
 
 
 def main():
-    """Основная логика работы бота."""
-    try:
-        check_tokens()
-        bot = telebot.TeleBot(TELEGRAM_TOKEN)
-        timestamp = int(time.time())
+    """Основная логика работы бота.
 
-        while True:
-            timestamp = check_homework_status(bot, timestamp)
-            time.sleep(RETRY_PERIOD)
-    except Exception as error:
-        logger.error(f"Программа завершена с ошибкой: {error}")
-        sys.exit(1)
+    Инициализирует бота и запускает бесконечный цикл проверки статуса
+    домашних работ.
+    """
+    check_tokens()
+    bot = telebot.TeleBot(TELEGRAM_TOKEN)
+    timestamp = int(time.time())
+
+    while True:
+        timestamp = check_homework_status(bot, timestamp)
+        time.sleep(RETRY_PERIOD)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     logging.basicConfig(
         level=logging.DEBUG,
         format=(
-            "%(asctime)s [%(levelname)s] "
-            "%(name)s:%(funcName)s:%(lineno)d - %(message)s"
+            '%(asctime)s [%(levelname)s] '
+            '%(name)s:%(funcName)s:%(lineno)d - %(message)s'
         ),
         handlers=[logging.StreamHandler(sys.stdout)],
     )
