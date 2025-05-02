@@ -14,16 +14,17 @@ from exceptions import APIError
 
 load_dotenv()
 
+# Константы для работы с API
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
+ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
+HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
+
+# Константы для работы с Telegram
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
+# Общие константы
 RETRY_PERIOD = 600
-ENDPOINT = (
-    'https://practicum.yandex.ru/api/'
-    'user_api/homework_statuses/'
-)
-HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
 HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
@@ -103,20 +104,12 @@ def get_api_answer(timestamp):
             params={'from_date': timestamp},
         )
     except requests.exceptions.RequestException as error:
-        logging.exception(
-            f'Ошибка при запросе к API: {error}. '
-            f'URL: {ENDPOINT}, timestamp: {timestamp}'
-        )
         raise ConnectionError(
             f'Ошибка при запросе к API: {error}. '
             f'URL: {ENDPOINT}, timestamp: {timestamp}'
         )
 
     if response.status_code != HTTPStatus.OK:
-        logging.exception(
-            f'Эндпоинт недоступен (status={response.status_code}). '
-            f'URL: {ENDPOINT}'
-        )
         raise APIError(
             f'Эндпоинт недоступен (status={response.status_code}). '
             f'URL: {ENDPOINT}'
@@ -141,25 +134,16 @@ def check_response(response):
     """
     logging.debug('Начинаю проверку ответа API')
     if not isinstance(response, dict):
-        logging.exception(
-            'Ответ API не является словарем, '
-            f'получен тип {type(response).__name__}'
-        )
         raise TypeError(
             'Ответ API не является словарем, '
             f'получен тип {type(response).__name__}'
         )
 
     if 'homeworks' not in response:
-        logging.exception('В ответе API отсутствует ключ "homeworks"')
         raise KeyError('В ответе API отсутствует ключ "homeworks"')
 
     homeworks = response['homeworks']
     if not isinstance(homeworks, list):
-        logging.exception(
-            'В ответе API homeworks не является списком, '
-            f'получен тип {type(homeworks).__name__}'
-        )
         raise TypeError(
             'В ответе API homeworks не является списком, '
             f'получен тип {type(homeworks).__name__}'
@@ -185,10 +169,6 @@ def parse_status(homework):
     """
     logging.debug('Начинаю разбор статуса домашней работы')
     if not isinstance(homework, dict):
-        logging.exception(
-            'homework должен быть словарем, '
-            f'получен тип {type(homework).__name__}'
-        )
         raise TypeError(
             'homework должен быть словарем, '
             f'получен тип {type(homework).__name__}'
@@ -197,9 +177,6 @@ def parse_status(homework):
     required_keys = ['homework_name', 'status']
     missing_keys = [key for key in required_keys if key not in homework]
     if missing_keys:
-        logging.exception(
-            f'В ответе API отсутствуют ключи: {", ".join(missing_keys)}'
-        )
         raise KeyError(
             f'В ответе API отсутствуют ключи: {", ".join(missing_keys)}'
         )
@@ -208,7 +185,6 @@ def parse_status(homework):
     status = homework['status']
 
     if status not in HOMEWORK_VERDICTS:
-        logging.exception(f'Неожиданный статус домашней работы: {status}')
         raise ValueError(f'Неожиданный статус домашней работы: {status}')
 
     verdict = HOMEWORK_VERDICTS[status]
